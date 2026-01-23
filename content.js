@@ -1,4 +1,30 @@
-const audio = new Audio(chrome.runtime.getURL('notification.mp3'));
+const AUDIO_URL = chrome.runtime.getURL('notification.mp3');
+let audio = new Audio(AUDIO_URL);
+const STORAGE_KEY = 'chatgpt_notifier_volume';
+
+// 从存储初始化音量
+chrome.storage.local.get([STORAGE_KEY], (result) => {
+    const vol = result[STORAGE_KEY];
+
+    if (typeof vol === 'number') {
+        audio.volume = vol;
+    }
+    else {
+        audio.volume = 0.5;
+    }
+});
+
+// 监听来自 popup 的音量变化
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[STORAGE_KEY]) {
+        // 直接更新音量属性，无需重建对象
+        // 这能确保更流畅的体验，且避免潜在的加载延迟
+        const newVol = changes[STORAGE_KEY].newValue;
+        if (typeof newVol === 'number') {
+            audio.volume = newVol;
+        }
+    }
+});
 
 /**
  * 所有已知的「正在写作」DOM 选择器
@@ -21,16 +47,21 @@ function checkStreaming() {
 
     if (stillStreaming) {
         isStreaming = true;
-        clearTimeout(doneTimerId);          // 只要又检测到流式，就取消结束计时
+
+        // 只要又检测到流式，就取消结束计时
+        clearTimeout(doneTimerId);
+
         doneTimerId = null;
-    } else if (isStreaming && !doneTimerId) {
+    }
+    else if (isStreaming && !doneTimerId) {
         // 第一次检测到 “似乎结束”，启动消抖计时器
         doneTimerId = setTimeout(() => {
             // 再次确认页面上确实已经没有流式节点
             if (document.querySelector(STREAM_SELECTORS) === null) {
-                audio.play().catch(() => {/* 忽略自动播放限制 */ });
+                audio.play().catch(() => {/* 忽略自动播放限制 */});
                 isStreaming = false;
             }
+
             doneTimerId = null;
         }, DEBOUNCE_MS);
     }

@@ -1,10 +1,15 @@
 {
     "name": "ChatGPT Notifier",
     "manifest_version": 3,
-    "version": "1.1",
+    "version": "1.2",
     "description": "A Chrome extension that notifies you when ChatGPT has finished processing your request.",
     "icons": {
         "128": "logo.png"
+    },
+    "permissions": ["storage"],
+    "action": {
+        "default_popup": "popup.html",
+        "default_icon": "logo.png"
     },
     "content_scripts": [
         {
