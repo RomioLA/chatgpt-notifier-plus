@@ -1,0 +1,21 @@
+{
+    "name": "ChatGPT Notifier",
+    "manifest_version": 3,
+    "version": "1.1",
+    "description": "A Chrome extension that notifies you when ChatGPT has finished processing your request.",
+    "icons": {
+        "128": "logo.png"
+    },
+    "content_scripts": [
+        {
+            "matches": ["https://chatgpt.com/*"],
+            "js": ["content.js"]
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": ["notification.mp3"],
+            "matches": ["https://chatgpt.com/*"]
+        }
+    ]
+}
