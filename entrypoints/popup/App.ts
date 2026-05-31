@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initialize from stored settings
   chrome.storage.local.get([VOLUME_STORAGE_KEY, SYSTEM_NOTIFICATION_KEY], (result) => {
-    let vol = result[VOLUME_STORAGE_KEY];
+    let vol: number = result[VOLUME_STORAGE_KEY] as number;
     if (typeof vol !== 'number') {
       vol = 0.5;
     }
