@@ -12,6 +12,8 @@ ChatGPT の応答が完了すると通知音を再生し、システム通知を
 
 ChatGPT의 응답이 완료되면 알림음을 재생하고 시스템 알림을 표시할 수 있습니다.
 
+![Demo](assets/demo.png)
+
 ## Install
 
 [ChatGPT Notifier on Chrome Web Store](https://chromewebstore.google.com/detail/chatgpt-notifier/mliheodfanlkjlbgifdfnfmilemchoeg)
