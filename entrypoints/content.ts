@@ -1,3 +1,5 @@
+import { SOUNDS, playTone } from '@/lib/sounds';
+
 export default defineContentScript({
   matches: ['https://chatgpt.com/*'],
 
@@ -5,28 +7,53 @@ export default defineContentScript({
     const AUDIO_URL = chrome.runtime.getURL('notification.mp3');
     const audio = new Audio(AUDIO_URL);
     const VOLUME_STORAGE_KEY = 'chatgpt_notifier_volume';
+    const SOUND_STORAGE_KEY = 'chatgpt_notifier_sound_id';
 
-    // Initialize volume from storage
-    chrome.storage.local.get([VOLUME_STORAGE_KEY], (result) => {
+    let currentSoundId = 'default';
+    let currentVolume = 0.5;
+
+    // Initialize volume and sound from storage
+    chrome.storage.local.get([VOLUME_STORAGE_KEY, SOUND_STORAGE_KEY], (result) => {
       const vol = result[VOLUME_STORAGE_KEY];
       if (typeof vol === 'number') {
+        currentVolume = vol;
         audio.volume = vol;
-      } else {
-        audio.volume = 0.5;
+      }
+
+      const soundId = result[SOUND_STORAGE_KEY] as string | undefined;
+      if (soundId) {
+        currentSoundId = soundId;
       }
     });
 
-    // Listen for volume changes from popup
+    // Listen for changes from popup
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return;
 
       if (changes[VOLUME_STORAGE_KEY]) {
         const newVol = changes[VOLUME_STORAGE_KEY].newValue;
         if (typeof newVol === 'number') {
+          currentVolume = newVol;
           audio.volume = newVol;
         }
       }
+
+      if (changes[SOUND_STORAGE_KEY]) {
+        const newSound = changes[SOUND_STORAGE_KEY].newValue as string | undefined;
+        currentSoundId = newSound || 'default';
+      }
     });
+
+    function playNotification() {
+      const sound = SOUNDS.find((s) => s.id === currentSoundId);
+      if (sound && sound.freqs.length > 0) {
+        playTone(sound.freqs, currentVolume, sound.type);
+      } else {
+        audio.play().catch(() => {
+          /* ignore autoplay restrictions */
+        });
+      }
+    }
 
     /**
      * All known "streaming" DOM selectors.
@@ -52,9 +79,7 @@ export default defineContentScript({
       } else if (isStreaming && !doneTimerId) {
         doneTimerId = setTimeout(() => {
           if (document.querySelector(STREAM_SELECTORS) === null) {
-            audio.play().catch(() => {
-              /* ignore autoplay restrictions */
-            });
+            playNotification();
             chrome.runtime.sendMessage({
               type: 'CHATGPT_REPLY_DONE',
               payload: {

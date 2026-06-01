@@ -44,6 +44,83 @@ label {
   position: relative;
 }
 
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: #343541;
+  cursor: pointer;
+}
+
+.chevron {
+  font-size: 14px;
+  color: #8a8f98;
+  transition: transform 0.15s;
+}
+
+.chevron.open {
+  transform: rotate(180deg);
+}
+
+.sound-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 132px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.sound-list.collapsed {
+  display: none;
+}
+
+.sound-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #e5e5e5;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.sound-item:hover {
+  border-color: #c5c5d2;
+}
+
+.sound-item.active {
+  border-color: #343541;
+  background-color: #f9f9fb;
+}
+
+.sound-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #d1d5db;
+  flex-shrink: 0;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.sound-item.active .sound-dot {
+  border-color: #343541;
+  background-color: #343541;
+}
+
+.sound-name {
+  font-size: 13px;
+  color: #343541;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;
@@ -52,7 +129,6 @@ label {
 }
 
 .hint-text {
-  margin-top: -8px;
   font-size: 12px;
   line-height: 1.4;
   color: #8a8f98;
@@ -167,4 +243,13 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .github-link:hover {
   color: #6e6e80;
+}
+
+.sound-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sound-list::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 2px;
 }
