@@ -5,6 +5,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const VOLUME_STORAGE_KEY = 'chatgpt_notifier_volume';
   const SYSTEM_NOTIFICATION_KEY = 'chatgpt_notifier_system_notification_enabled';
 
+  const audio = new Audio(chrome.runtime.getURL('notification.mp3'));
+
   // Initialize from stored settings
   chrome.storage.local.get([VOLUME_STORAGE_KEY, SYSTEM_NOTIFICATION_KEY], (result) => {
     let vol: number = result[VOLUME_STORAGE_KEY] as number;
@@ -12,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
       vol = 0.5;
     }
     slider.value = String(vol);
+    audio.volume = vol;
     updateDisplay(vol);
     updateSliderBackground(slider);
 
@@ -23,6 +26,14 @@ document.addEventListener('DOMContentLoaded', () => {
     updateDisplay(val);
     updateSliderBackground(e.target as HTMLInputElement);
     chrome.storage.local.set({ [VOLUME_STORAGE_KEY]: val });
+  });
+
+  slider.addEventListener('change', () => {
+    audio.volume = parseFloat(slider.value);
+    audio.currentTime = 0;
+    audio.play().catch(() => {
+      /* ignore autoplay restrictions */
+    });
   });
 
   systemNotifyToggle.addEventListener('change', (e) => {
