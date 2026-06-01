@@ -60,13 +60,16 @@ label {
 }
 
 .chevron {
-  font-size: 14px;
-  color: #8a8f98;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid #8a8f98;
+  border-bottom: 2px solid #8a8f98;
+  transform: translateY(-2px) rotate(45deg);
   transition: transform 0.15s;
 }
 
 .chevron.open {
-  transform: rotate(180deg);
+  transform: translateY(2px) rotate(-135deg);
 }
 
 .sound-list {
