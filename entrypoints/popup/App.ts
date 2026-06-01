@@ -7,6 +7,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const audio = new Audio(chrome.runtime.getURL('notification.mp3'));
 
+  // Set version from manifest
+  const versionLabel = document.getElementById('versionLabel')!;
+  versionLabel.textContent = `v${chrome.runtime.getManifest().version}`;
+
   // Initialize from stored settings
   chrome.storage.local.get([VOLUME_STORAGE_KEY, SYSTEM_NOTIFICATION_KEY], (result) => {
     let vol: number = result[VOLUME_STORAGE_KEY] as number;
