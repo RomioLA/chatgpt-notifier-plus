@@ -8,6 +8,8 @@ A Chrome extension that notifies you when ChatGPT finishes responding.
 - 🔔 Optional system notification
 - 🎛️ Collapsible sound picker
 
+![Demo](assets/demo.png)
+
 ## Install
 
 [ChatGPT Notifier on Chrome Web Store](https://chromewebstore.google.com/detail/chatgpt-notifier/mliheodfanlkjlbgifdfnfmilemchoeg)
