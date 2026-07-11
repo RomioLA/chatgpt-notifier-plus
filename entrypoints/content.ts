@@ -9,7 +9,6 @@ export default defineContentScript({
     const VOLUME_STORAGE_KEY = 'chatgpt_notifier_volume';
     const SOUND_STORAGE_KEY = 'chatgpt_notifier_sound_id';
     const UNREAD_PREFIX = '● ';
-    const UNREAD_ICON_ID = 'chatgpt-notifier-unread-icon';
     const MAX_TASK_LENGTH = 160;
 
     let currentSoundId = 'default';
@@ -42,22 +41,6 @@ export default defineContentScript({
       return text ? truncate(text, MAX_TASK_LENGTH) : '回复已生成。';
     }
 
-    function ensureUnreadIcon() {
-      let icon = document.getElementById(UNREAD_ICON_ID) as HTMLLinkElement | null;
-      if (!icon) {
-        icon = document.createElement('link');
-        icon.id = UNREAD_ICON_ID;
-        icon.rel = 'icon';
-        icon.type = 'image/svg+xml';
-        icon.href =
-          'data:image/svg+xml,' +
-          encodeURIComponent(
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#d93025"/><circle cx="32" cy="32" r="12" fill="#ffffff"/></svg>',
-          );
-        document.head.appendChild(icon);
-      }
-    }
-
     function applyUnreadMarker() {
       if (!unread) return;
 
@@ -66,11 +49,12 @@ export default defineContentScript({
       if (document.title !== desiredTitle) {
         document.title = desiredTitle;
       }
-
-      ensureUnreadIcon();
     }
 
-    function markUnread() {
+    function markUnread(force = false) {
+      // Normal completion markers are only needed for tabs the user is not viewing.
+      if (!force && !document.hidden) return;
+
       unread = true;
       applyUnreadMarker();
 
@@ -91,12 +75,7 @@ export default defineContentScript({
       if (document.title !== cleanTitle) {
         document.title = cleanTitle;
       }
-
-      document.getElementById(UNREAD_ICON_ID)?.remove();
     }
-
-    window.addEventListener('pointerdown', clearUnread, { capture: true });
-    window.addEventListener('keydown', clearUnread, { capture: true });
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === 'CHATGPT_CLEAR_UNREAD') {
@@ -106,7 +85,7 @@ export default defineContentScript({
       }
 
       if (message?.type === 'CHATGPT_TEST_MARKER') {
-        markUnread();
+        markUnread(true);
         sendResponse({ ok: true });
       }
     });
