@@ -76,7 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
-        setStatus('Tab marker applied. The title should start with ● and the favicon should turn red.', 'success');
+        setStatus('Tab marker applied. It will remain until you leave this tab and switch back to it.', 'success');
       });
     });
   });
