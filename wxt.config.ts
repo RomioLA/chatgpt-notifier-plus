@@ -6,7 +6,7 @@ export default defineConfig({
     version: '1.6.1',
     description:
       'Task-aware ChatGPT completion notifications with click-to-focus and unread tab markers.',
-    permissions: ['storage', 'notifications', 'tabs'],
+    permissions: ['storage', 'notifications'],
     icons: {
       '128': '/logo.png',
     },
