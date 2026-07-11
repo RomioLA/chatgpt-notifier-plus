@@ -78,13 +78,10 @@ export default defineContentScript({
       characterData: true,
     });
 
-    // A completed reply stays marked until the user actually returns/interacts.
-    window.addEventListener('focus', clearUnread);
+    // If the reply finished in the currently active tab, clear the marker only
+    // after the user actually interacts with the page.
     window.addEventListener('pointerdown', clearUnread, { capture: true });
     window.addEventListener('keydown', clearUnread, { capture: true });
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) clearUnread();
-    });
 
     chrome.runtime.onMessage.addListener((message) => {
       if (message?.type === 'CHATGPT_CLEAR_UNREAD') {
@@ -149,6 +146,26 @@ export default defineContentScript({
     let doneTimerId: ReturnType<typeof setTimeout> | null = null;
     const DEBOUNCE_MS = 300;
 
+    function sendCompletionMessage(conversationTitle: string, taskSummary: string) {
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: 'CHATGPT_REPLY_DONE',
+            payload: {
+              title: `ChatGPT 已完成：${conversationTitle}`,
+              message: `任务：${taskSummary}`,
+            },
+          },
+          () => {
+            void chrome.runtime.lastError;
+          },
+        );
+      } catch {
+        // The extension was probably reloaded while this page was still open.
+        // A page refresh will inject the current content script again.
+      }
+    }
+
     function checkStreaming() {
       const stillStreaming = document.querySelector(STREAM_SELECTORS) !== null;
 
@@ -164,15 +181,8 @@ export default defineContentScript({
 
             playNotification();
             markUnread();
-
-            chrome.runtime.sendMessage({
-              type: 'CHATGPT_REPLY_DONE',
-              payload: {
-                title: `ChatGPT 已完成：${conversationTitle}`,
-                message: `任务：${taskSummary}`,
-              },
-            });
             isStreaming = false;
+            sendCompletionMessage(conversationTitle, taskSummary);
           }
           doneTimerId = null;
         }, DEBOUNCE_MS);
