@@ -55,10 +55,6 @@ export default defineContentScript({
     }
 
     function markUnread() {
-      if (!document.hidden && document.hasFocus()) {
-        return;
-      }
-
       unread = true;
       baseTitle = stripUnreadPrefix(document.title) || baseTitle;
       syncUnreadTitle();
@@ -82,9 +78,18 @@ export default defineContentScript({
       characterData: true,
     });
 
+    // A completed reply stays marked until the user actually returns/interacts.
     window.addEventListener('focus', clearUnread);
+    window.addEventListener('pointerdown', clearUnread, { capture: true });
+    window.addEventListener('keydown', clearUnread, { capture: true });
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) clearUnread();
+    });
+
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message?.type === 'CHATGPT_CLEAR_UNREAD') {
+        clearUnread();
+      }
     });
 
     // Initialize volume and sound from storage.
