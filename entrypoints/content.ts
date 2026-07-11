@@ -9,12 +9,13 @@ export default defineContentScript({
     const VOLUME_STORAGE_KEY = 'chatgpt_notifier_volume';
     const SOUND_STORAGE_KEY = 'chatgpt_notifier_sound_id';
     const UNREAD_PREFIX = '● ';
+    const UNREAD_ICON_ID = 'chatgpt-notifier-unread-icon';
     const MAX_TASK_LENGTH = 160;
 
     let currentSoundId = 'default';
     let currentVolume = 0.5;
     let unread = false;
-    let baseTitle = stripUnreadPrefix(document.title) || 'ChatGPT';
+    let unreadTimerId: ReturnType<typeof setInterval> | null = null;
 
     function stripUnreadPrefix(title: string) {
       return title.replace(/^●\s*/, '').trim();
@@ -38,58 +39,78 @@ export default defineContentScript({
       const messages = document.querySelectorAll<HTMLElement>('[data-message-author-role="user"]');
       const latest = messages.item(messages.length - 1);
       const text = normalizeText(latest?.innerText || latest?.textContent || '');
-
       return text ? truncate(text, MAX_TASK_LENGTH) : '回复已生成。';
     }
 
-    function syncUnreadTitle() {
-      const cleanTitle = stripUnreadPrefix(document.title);
-      if (cleanTitle) baseTitle = cleanTitle;
+    function ensureUnreadIcon() {
+      let icon = document.getElementById(UNREAD_ICON_ID) as HTMLLinkElement | null;
+      if (!icon) {
+        icon = document.createElement('link');
+        icon.id = UNREAD_ICON_ID;
+        icon.rel = 'icon';
+        icon.type = 'image/svg+xml';
+        icon.href =
+          'data:image/svg+xml,' +
+          encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#d93025"/><circle cx="32" cy="32" r="12" fill="#ffffff"/></svg>',
+          );
+        document.head.appendChild(icon);
+      }
+    }
 
+    function applyUnreadMarker() {
       if (!unread) return;
 
-      const desiredTitle = `${UNREAD_PREFIX}${baseTitle}`;
+      const cleanTitle = stripUnreadPrefix(document.title) || 'ChatGPT';
+      const desiredTitle = `${UNREAD_PREFIX}${cleanTitle}`;
       if (document.title !== desiredTitle) {
         document.title = desiredTitle;
       }
+
+      ensureUnreadIcon();
     }
 
     function markUnread() {
       unread = true;
-      baseTitle = stripUnreadPrefix(document.title) || baseTitle;
-      syncUnreadTitle();
+      applyUnreadMarker();
+
+      if (!unreadTimerId) {
+        unreadTimerId = setInterval(applyUnreadMarker, 500);
+      }
     }
 
     function clearUnread() {
-      if (!unread) return;
-
       unread = false;
-      baseTitle = stripUnreadPrefix(document.title) || baseTitle;
-      if (document.title !== baseTitle) {
-        document.title = baseTitle;
+
+      if (unreadTimerId) {
+        clearInterval(unreadTimerId);
+        unreadTimerId = null;
       }
+
+      const cleanTitle = stripUnreadPrefix(document.title);
+      if (document.title !== cleanTitle) {
+        document.title = cleanTitle;
+      }
+
+      document.getElementById(UNREAD_ICON_ID)?.remove();
     }
 
-    // Keep the unread dot even if ChatGPT updates the page title after a reply.
-    const titleObserver = new MutationObserver(syncUnreadTitle);
-    titleObserver.observe(document.head, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-
-    // If the reply finished in the currently active tab, clear the marker only
-    // after the user actually interacts with the page.
     window.addEventListener('pointerdown', clearUnread, { capture: true });
     window.addEventListener('keydown', clearUnread, { capture: true });
 
-    chrome.runtime.onMessage.addListener((message) => {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === 'CHATGPT_CLEAR_UNREAD') {
         clearUnread();
+        sendResponse({ ok: true });
+        return;
+      }
+
+      if (message?.type === 'CHATGPT_TEST_MARKER') {
+        markUnread();
+        sendResponse({ ok: true });
       }
     });
 
-    // Initialize volume and sound from storage.
     chrome.storage.local.get([VOLUME_STORAGE_KEY, SOUND_STORAGE_KEY], (result) => {
       const vol = result[VOLUME_STORAGE_KEY];
       if (typeof vol === 'number') {
@@ -103,7 +124,6 @@ export default defineContentScript({
       }
     });
 
-    // Listen for changes from the popup.
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return;
 
@@ -132,10 +152,6 @@ export default defineContentScript({
       }
     }
 
-    /**
-     * All known "streaming" DOM selectors.
-     * If OpenAI changes the UI again, add new selectors here.
-     */
     const STREAM_SELECTORS = [
       '.result-streaming',
       'button[data-testid$="stop-button"]',
@@ -161,8 +177,7 @@ export default defineContentScript({
           },
         );
       } catch {
-        // The extension was probably reloaded while this page was still open.
-        // A page refresh will inject the current content script again.
+        // The extension was reloaded while this page was still open.
       }
     }
 
