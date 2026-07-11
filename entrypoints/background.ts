@@ -24,36 +24,13 @@ export default defineBackground(() => {
     });
   }
 
-  function createNotificationAttempt(
-    notificationId: string,
-    payload: Required<DonePayload>,
-    requireInteraction: boolean,
-    onComplete: (error?: string) => void,
-  ) {
-    chrome.notifications.create(
-      notificationId,
-      {
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('logo.png'),
-        title: payload.title,
-        message: payload.message,
-        priority: 2,
-        requireInteraction,
-      },
-      () => {
-        const error = chrome.runtime.lastError?.message;
-        onComplete(error);
-      },
-    );
-  }
-
   function createSystemNotification(payload: DonePayload = {}, tabId?: number) {
-    const resolvedPayload: Required<DonePayload> = {
-      title: payload.title || 'ChatGPT 已完成',
-      message: payload.message || '回复已生成。',
-    };
+    const title = payload.title || 'ChatGPT 已完成';
+    const message = payload.message || '回复已生成。';
     const target = typeof tabId === 'number' ? String(tabId) : 'none';
-    const notificationId = `${NOTIFICATION_PREFIX}:${target}:${Date.now()}`;
+    const notificationId = `${NOTIFICATION_PREFIX}:${target}:${Date.now()}:${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
 
     chrome.notifications.getPermissionLevel((permission) => {
       const permissionError = chrome.runtime.lastError?.message;
@@ -67,23 +44,33 @@ export default defineBackground(() => {
         return;
       }
 
-      // Prefer a sticky notification. Some Chromium variants reject this option,
-      // so retry once with a normal system notification if needed.
-      createNotificationAttempt(notificationId, resolvedPayload, true, (stickyError) => {
-        if (!stickyError) {
-          writeStatus('success', 'Windows 通知已发送（持续显示模式）。');
-          return;
-        }
-
-        createNotificationAttempt(notificationId, resolvedPayload, false, (fallbackError) => {
-          if (!fallbackError) {
-            writeStatus('success', 'Windows 通知已发送（系统默认停留时间）。');
+      // Use the same normal notification mode as the original extension.
+      // Edge/Windows controls how long the toast remains visible.
+      chrome.notifications.create(
+        notificationId,
+        {
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('logo.png'),
+          title,
+          message,
+          priority: 1,
+        },
+        () => {
+          const error = chrome.runtime.lastError?.message;
+          if (error) {
+            writeStatus('error', `通知发送失败：${error}`);
             return;
           }
 
-          writeStatus('error', `通知发送失败：${fallbackError || stickyError}`);
-        });
-      });
+          writeStatus('success', 'Windows 通知请求已提交（系统默认停留时间）。');
+        },
+      );
+    });
+  }
+
+  function clearUnreadMarker(tabId: number) {
+    chrome.tabs.sendMessage(tabId, { type: 'CHATGPT_CLEAR_UNREAD' }, () => {
+      void chrome.runtime.lastError;
     });
   }
 
@@ -91,13 +78,10 @@ export default defineBackground(() => {
     if (!message) return;
 
     if (message.type === 'CHATGPT_TEST_NOTIFICATION') {
-      createSystemNotification(
-        {
-          title: 'ChatGPT Notifier Plus 测试',
-          message: 'Windows 通知功能正常。',
-        },
-        sender.tab?.id,
-      );
+      createSystemNotification({
+        title: 'ChatGPT Notifier Plus 测试',
+        message: 'Windows 通知功能正常。',
+      });
       return;
     }
 
@@ -110,6 +94,11 @@ export default defineBackground(() => {
         createSystemNotification(message.payload, sender.tab?.id);
       }
     });
+  });
+
+  // Clear the marker when the user actually switches to that tab.
+  chrome.tabs.onActivated.addListener(({ tabId }) => {
+    clearUnreadMarker(tabId);
   });
 
   chrome.notifications.onClicked.addListener((notificationId) => {
@@ -133,9 +122,7 @@ export default defineBackground(() => {
 
       chrome.tabs.update(tabId, { active: true }, () => {
         void chrome.runtime.lastError;
-        chrome.tabs.sendMessage(tabId, { type: 'CHATGPT_CLEAR_UNREAD' }, () => {
-          void chrome.runtime.lastError;
-        });
+        clearUnreadMarker(tabId);
       });
 
       chrome.windows.update(tab.windowId, { focused: true }, () => {
