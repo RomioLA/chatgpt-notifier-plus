@@ -8,11 +8,86 @@ export default defineContentScript({
     const audio = new Audio(AUDIO_URL);
     const VOLUME_STORAGE_KEY = 'chatgpt_notifier_volume';
     const SOUND_STORAGE_KEY = 'chatgpt_notifier_sound_id';
+    const UNREAD_PREFIX = '● ';
+    const MAX_TASK_LENGTH = 160;
 
     let currentSoundId = 'default';
     let currentVolume = 0.5;
+    let unread = false;
+    let baseTitle = stripUnreadPrefix(document.title) || 'ChatGPT';
 
-    // Initialize volume and sound from storage
+    function stripUnreadPrefix(title: string) {
+      return title.replace(/^●\s*/, '').trim();
+    }
+
+    function normalizeText(text: string) {
+      return text.replace(/\s+/g, ' ').trim();
+    }
+
+    function truncate(text: string, maxLength: number) {
+      if (text.length <= maxLength) return text;
+      return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+    }
+
+    function getConversationTitle() {
+      const title = stripUnreadPrefix(document.title);
+      return title && title !== 'ChatGPT' ? truncate(title, 80) : 'ChatGPT 对话';
+    }
+
+    function getLatestUserMessage() {
+      const messages = document.querySelectorAll<HTMLElement>('[data-message-author-role="user"]');
+      const latest = messages.item(messages.length - 1);
+      const text = normalizeText(latest?.innerText || latest?.textContent || '');
+
+      return text ? truncate(text, MAX_TASK_LENGTH) : '回复已生成。';
+    }
+
+    function syncUnreadTitle() {
+      const cleanTitle = stripUnreadPrefix(document.title);
+      if (cleanTitle) baseTitle = cleanTitle;
+
+      if (!unread) return;
+
+      const desiredTitle = `${UNREAD_PREFIX}${baseTitle}`;
+      if (document.title !== desiredTitle) {
+        document.title = desiredTitle;
+      }
+    }
+
+    function markUnread() {
+      if (!document.hidden && document.hasFocus()) {
+        return;
+      }
+
+      unread = true;
+      baseTitle = stripUnreadPrefix(document.title) || baseTitle;
+      syncUnreadTitle();
+    }
+
+    function clearUnread() {
+      if (!unread) return;
+
+      unread = false;
+      baseTitle = stripUnreadPrefix(document.title) || baseTitle;
+      if (document.title !== baseTitle) {
+        document.title = baseTitle;
+      }
+    }
+
+    // Keep the unread dot even if ChatGPT updates the page title after a reply.
+    const titleObserver = new MutationObserver(syncUnreadTitle);
+    titleObserver.observe(document.head, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    window.addEventListener('focus', clearUnread);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) clearUnread();
+    });
+
+    // Initialize volume and sound from storage.
     chrome.storage.local.get([VOLUME_STORAGE_KEY, SOUND_STORAGE_KEY], (result) => {
       const vol = result[VOLUME_STORAGE_KEY];
       if (typeof vol === 'number') {
@@ -26,7 +101,7 @@ export default defineContentScript({
       }
     });
 
-    // Listen for changes from popup
+    // Listen for changes from the popup.
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return;
 
@@ -57,7 +132,7 @@ export default defineContentScript({
 
     /**
      * All known "streaming" DOM selectors.
-     * If OpenAI changes the UI again, just add new selectors here.
+     * If OpenAI changes the UI again, add new selectors here.
      */
     const STREAM_SELECTORS = [
       '.result-streaming',
@@ -74,17 +149,22 @@ export default defineContentScript({
 
       if (stillStreaming) {
         isStreaming = true;
-        clearTimeout(doneTimerId!);
+        if (doneTimerId) clearTimeout(doneTimerId);
         doneTimerId = null;
       } else if (isStreaming && !doneTimerId) {
         doneTimerId = setTimeout(() => {
           if (document.querySelector(STREAM_SELECTORS) === null) {
+            const conversationTitle = getConversationTitle();
+            const taskSummary = getLatestUserMessage();
+
             playNotification();
+            markUnread();
+
             chrome.runtime.sendMessage({
               type: 'CHATGPT_REPLY_DONE',
               payload: {
-                title: 'ChatGPT Notifier',
-                message: 'ChatGPT has finished responding.',
+                title: `ChatGPT 已完成：${conversationTitle}`,
+                message: `任务：${taskSummary}`,
               },
             });
             isStreaming = false;
