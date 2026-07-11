@@ -3,10 +3,10 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   manifest: {
     name: 'ChatGPT Notifier Plus',
-    version: '1.6.0',
+    version: '1.6.1',
     description:
       'Task-aware ChatGPT completion notifications with click-to-focus and unread tab markers.',
-    permissions: ['storage', 'notifications'],
+    permissions: ['storage', 'notifications', 'tabs'],
     icons: {
       '128': '/logo.png',
     },
