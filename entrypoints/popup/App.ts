@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const systemNotifyToggle = document.getElementById('systemNotifyToggle') as HTMLInputElement;
   const soundList = document.getElementById('soundList')!;
   const testNotificationButton = document.getElementById('testNotificationButton') as HTMLButtonElement;
+  const testMarkerButton = document.getElementById('testMarkerButton') as HTMLButtonElement;
   const notificationStatus = document.getElementById('notificationStatus')!;
   const VOLUME_STORAGE_KEY = 'chatgpt_notifier_volume';
   const SYSTEM_NOTIFICATION_KEY = 'chatgpt_notifier_system_notification_enabled';
@@ -21,20 +22,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const defaultAudio = new Audio(chrome.runtime.getURL('notification.mp3'));
 
-  // Set version from manifest.
   const versionLabel = document.getElementById('versionLabel')!;
   versionLabel.textContent = `v${chrome.runtime.getManifest().version}`;
 
-  function renderNotificationStatus(status?: NotificationStatus) {
+  function setStatus(message: string, state?: NotificationStatus['state'] | 'pending') {
     notificationStatus.className = 'notification-status';
+    if (state) notificationStatus.classList.add(state);
+    notificationStatus.textContent = message;
+  }
 
+  function renderNotificationStatus(status?: NotificationStatus) {
     if (!status) {
-      notificationStatus.textContent = 'Use the test button to verify Windows notifications.';
+      setStatus('Use the buttons below to test each function.');
       return;
     }
 
-    notificationStatus.classList.add(status.state);
-    notificationStatus.textContent = status.message;
+    setStatus(status.message, status.state);
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -47,12 +50,37 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   testNotificationButton.addEventListener('click', () => {
-    notificationStatus.className = 'notification-status pending';
-    notificationStatus.textContent = 'Sending test notification…';
-    chrome.runtime.sendMessage({ type: 'CHATGPT_TEST_NOTIFICATION' });
+    setStatus('Sending test notification…', 'pending');
+    chrome.runtime.sendMessage({ type: 'CHATGPT_TEST_NOTIFICATION' }, () => {
+      const error = chrome.runtime.lastError?.message;
+      if (error) setStatus(`Background error: ${error}`, 'error');
+    });
   });
 
-  // --- Sound collapsible ---
+  testMarkerButton.addEventListener('click', () => {
+    setStatus('Testing the current ChatGPT tab marker…', 'pending');
+
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const error = chrome.runtime.lastError?.message;
+      const tabId = tabs[0]?.id;
+
+      if (error || typeof tabId !== 'number') {
+        setStatus(`Cannot find the active tab: ${error || 'unknown error'}`, 'error');
+        return;
+      }
+
+      chrome.tabs.sendMessage(tabId, { type: 'CHATGPT_TEST_MARKER' }, (response) => {
+        const sendError = chrome.runtime.lastError?.message;
+        if (sendError || !response?.ok) {
+          setStatus('Marker test failed. Refresh the current ChatGPT page and try again.', 'error');
+          return;
+        }
+
+        setStatus('Tab marker applied. The title should start with ● and the favicon should turn red.', 'success');
+      });
+    });
+  });
+
   const soundHeader = document.getElementById('soundHeader')!;
   const soundChevron = document.getElementById('soundChevron')!;
 
@@ -67,7 +95,6 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.storage.local.set({ [SOUND_COLLAPSED_KEY]: collapsed });
   });
 
-  // --- Sound list ---
   let activeSoundId = 'default';
 
   function preview(soundId: string) {
@@ -87,7 +114,6 @@ document.addEventListener('DOMContentLoaded', () => {
     SOUNDS.forEach((sound) => {
       const item = document.createElement('div');
       item.className = `sound-item${sound.id === activeSoundId ? ' active' : ''}`;
-
       item.innerHTML = `<span class="sound-dot"></span><span class="sound-name">${sound.name}</span>`;
 
       item.addEventListener('click', () => {
@@ -101,7 +127,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Volume ---
   function updateDisplay(val: number) {
     valueDisplay.textContent = String(Math.round(val * 100));
   }
