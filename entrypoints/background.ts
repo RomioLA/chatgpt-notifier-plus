@@ -9,10 +9,15 @@ type NotificationStatus = {
   updatedAt: number;
 };
 
+type NotificationTarget = {
+  tabId: number;
+  createdAt: number;
+};
+
 export default defineBackground(() => {
   const SYSTEM_NOTIFICATION_KEY = 'chatgpt_notifier_system_notification_enabled';
   const NOTIFICATION_STATUS_KEY = 'chatgpt_notifier_notification_status';
-  const NOTIFICATION_PREFIX = 'chatgpt-reply';
+  const NOTIFICATION_TARGET_PREFIX = 'chatgpt_notifier_target_';
 
   function writeStatus(state: NotificationStatus['state'], message: string) {
     chrome.storage.local.set({
@@ -24,48 +29,43 @@ export default defineBackground(() => {
     });
   }
 
+  function targetStorageKey(notificationId: string) {
+    return `${NOTIFICATION_TARGET_PREFIX}${notificationId}`;
+  }
+
   function createSystemNotification(payload: DonePayload = {}, tabId?: number) {
     const title = payload.title || 'ChatGPT 已完成';
     const message = payload.message || '回复已生成。';
-    const target = typeof tabId === 'number' ? String(tabId) : 'none';
-    const notificationId = `${NOTIFICATION_PREFIX}:${target}:${Date.now()}:${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
 
-    chrome.notifications.getPermissionLevel((permission) => {
-      const permissionError = chrome.runtime.lastError?.message;
-      if (permissionError) {
-        writeStatus('error', `无法读取通知权限：${permissionError}`);
-        return;
-      }
+    // Keep this call intentionally identical to the original extension:
+    // let Chromium generate the notification ID and use normal toast timing.
+    chrome.notifications.create(
+      {
+        type: 'basic',
+        iconUrl: 'logo.png',
+        title,
+        message,
+        priority: 1,
+      },
+      (notificationId) => {
+        const error = chrome.runtime.lastError?.message;
+        if (error) {
+          writeStatus('error', `通知创建失败：${error}`);
+          return;
+        }
 
-      if (permission !== 'granted') {
-        writeStatus('denied', '浏览器或系统已禁止此扩展显示通知。');
-        return;
-      }
+        if (typeof tabId === 'number' && notificationId) {
+          chrome.storage.local.set({
+            [targetStorageKey(notificationId)]: {
+              tabId,
+              createdAt: Date.now(),
+            } satisfies NotificationTarget,
+          });
+        }
 
-      // Use the same normal notification mode as the original extension.
-      // Edge/Windows controls how long the toast remains visible.
-      chrome.notifications.create(
-        notificationId,
-        {
-          type: 'basic',
-          iconUrl: chrome.runtime.getURL('logo.png'),
-          title,
-          message,
-          priority: 1,
-        },
-        () => {
-          const error = chrome.runtime.lastError?.message;
-          if (error) {
-            writeStatus('error', `通知发送失败：${error}`);
-            return;
-          }
-
-          writeStatus('success', 'Windows 通知请求已提交（系统默认停留时间）。');
-        },
-      );
-    });
+        writeStatus('success', 'Edge 已创建通知；是否显示横幅由 Windows 通知设置决定。');
+      },
+    );
   }
 
   function clearUnreadMarker(tabId: number) {
@@ -80,7 +80,7 @@ export default defineBackground(() => {
     if (message.type === 'CHATGPT_TEST_NOTIFICATION') {
       createSystemNotification({
         title: 'ChatGPT Notifier Plus 测试',
-        message: 'Windows 通知功能正常。',
+        message: '如果你看到这条消息，Windows 通知横幅工作正常。',
       });
       return;
     }
@@ -96,40 +96,46 @@ export default defineBackground(() => {
     });
   });
 
-  // Clear the marker when the user actually switches to that tab.
   chrome.tabs.onActivated.addListener(({ tabId }) => {
     clearUnreadMarker(tabId);
   });
 
   chrome.notifications.onClicked.addListener((notificationId) => {
-    if (!notificationId.startsWith(`${NOTIFICATION_PREFIX}:`)) {
-      return;
-    }
+    const storageKey = targetStorageKey(notificationId);
 
-    const [, rawTabId] = notificationId.split(':');
-    const tabId = Number(rawTabId);
+    chrome.storage.local.get([storageKey], (result) => {
+      const target = result[storageKey] as NotificationTarget | undefined;
+      const tabId = target?.tabId;
 
-    if (!Number.isInteger(tabId)) {
-      chrome.notifications.clear(notificationId);
-      return;
-    }
-
-    chrome.tabs.get(tabId, (tab) => {
-      if (chrome.runtime.lastError || !tab) {
+      if (!Number.isInteger(tabId)) {
         chrome.notifications.clear(notificationId);
+        chrome.storage.local.remove(storageKey);
         return;
       }
 
-      chrome.tabs.update(tabId, { active: true }, () => {
-        void chrome.runtime.lastError;
-        clearUnreadMarker(tabId);
-      });
+      chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError || !tab) {
+          chrome.notifications.clear(notificationId);
+          chrome.storage.local.remove(storageKey);
+          return;
+        }
 
-      chrome.windows.update(tab.windowId, { focused: true }, () => {
-        void chrome.runtime.lastError;
-      });
+        chrome.tabs.update(tabId, { active: true }, () => {
+          void chrome.runtime.lastError;
+          clearUnreadMarker(tabId);
+        });
 
-      chrome.notifications.clear(notificationId);
+        chrome.windows.update(tab.windowId, { focused: true }, () => {
+          void chrome.runtime.lastError;
+        });
+
+        chrome.notifications.clear(notificationId);
+        chrome.storage.local.remove(storageKey);
+      });
     });
+  });
+
+  chrome.notifications.onClosed.addListener((notificationId) => {
+    chrome.storage.local.remove(targetStorageKey(notificationId));
   });
 });
