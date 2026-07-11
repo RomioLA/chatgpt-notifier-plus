@@ -137,6 +137,49 @@ label {
   color: #8a8f98;
 }
 
+.test-button {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #343541;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.test-button:hover {
+  background: #f7f7f8;
+  border-color: #aeb3bd;
+}
+
+.test-button:active {
+  background: #ececf1;
+}
+
+.notification-status {
+  min-height: 16px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #8a8f98;
+}
+
+.notification-status.pending {
+  color: #6e6e80;
+}
+
+.notification-status.success {
+  color: #16794d;
+}
+
+.notification-status.denied,
+.notification-status.error {
+  color: #b42318;
+}
+
 .switch {
   position: relative;
   width: 40px;
