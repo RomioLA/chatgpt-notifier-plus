@@ -2,9 +2,10 @@ import { defineConfig } from 'wxt';
 
 export default defineConfig({
   manifest: {
-    name: 'ChatGPT Notifier',
-    version: '1.5.0',
-    description: 'A Chrome extension that notifies you when ChatGPT has finished processing your request.',
+    name: 'ChatGPT Notifier Plus',
+    version: '1.6.0',
+    description:
+      'Task-aware ChatGPT completion notifications with click-to-focus and unread tab markers.',
     permissions: ['storage', 'notifications'],
     icons: {
       '128': '/logo.png',
