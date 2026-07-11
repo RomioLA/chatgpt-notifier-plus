@@ -1,26 +1,39 @@
-# ChatGPT Notifier
+# ChatGPT Notifier Plus
 
-A Chrome extension that notifies you when ChatGPT finishes responding.
+A Chrome/Edge extension that makes parallel ChatGPT tasks easier to identify when replies finish.
 
-**Features:**
-- 🎵 9 notification sounds to choose from (Tri-tone, Glass, Pop, Knock, and more)
-- 🔊 Adjustable volume with live preview
-- 🔔 Optional system notification
-- 🎛️ Collapsible sound picker
+## Features
 
-![Demo](assets/demo.png)
+- 9 notification sounds with adjustable volume
+- Optional system notifications
+- Notification title includes the ChatGPT conversation title
+- Notification body includes a summary of the latest user request
+- Notifications remain visible until clicked or dismissed
+- Clicking a notification focuses the exact ChatGPT tab that produced it
+- Background tabs receive a `●` unread marker in the tab title
+- The unread marker is removed when the tab is viewed
 
-## Install
+## Build and install locally
 
-[ChatGPT Notifier on Chrome Web Store](https://chromewebstore.google.com/detail/chatgpt-notifier/mliheodfanlkjlbgifdfnfmilemchoeg)
+```bash
+pnpm install
+pnpm build
+```
+
+Then open `edge://extensions` or `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select:
+
+```text
+.output/chrome-mv3
+```
+
+Enable **System notification** in the extension popup to use task-aware clickable notifications. Sound and unread-tab marking continue to work independently.
 
 ## Development
 
 ```bash
-pnpm install
-pnpm dev        # Dev mode with HMR
-pnpm build      # Production build
-pnpm zip        # Build + zip for store upload
+pnpm dev
+pnpm build
+pnpm zip
 ```
 
-Fully open source at [github.com/Taragryen/chatgpt-notifier](https://github.com/Taragryen/chatgpt-notifier).
+Forked from [Taragryen/chatgpt-notifier](https://github.com/Taragryen/chatgpt-notifier).
