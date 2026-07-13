@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const feishuWebhookInput = document.getElementById('feishuWebhookInput') as HTMLInputElement;
   const saveFeishuButton = document.getElementById('saveFeishuButton') as HTMLButtonElement;
   const testFeishuButton = document.getElementById('testFeishuButton') as HTMLButtonElement;
+  const testDelayedFeishuButton = document.getElementById('testDelayedFeishuButton') as HTMLButtonElement;
   const feishuStatus = document.getElementById('feishuStatus')!;
 
   const VOLUME_STORAGE_KEY = 'chatgpt_notifier_volume';
@@ -57,6 +58,28 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch {
       return false;
     }
+  }
+
+  function saveWebhookThen(messageType: string, pendingMessage: string) {
+    const webhook = feishuWebhookInput.value.trim();
+    if (!isValidFeishuWebhook(webhook)) {
+      setStatus(feishuStatus, 'Webhook 地址无效，请检查后重试。', 'error');
+      return;
+    }
+
+    setStatus(feishuStatus, pendingMessage, 'pending');
+    chrome.storage.local.set({ [FEISHU_WEBHOOK_KEY]: webhook }, () => {
+      const saveError = chrome.runtime.lastError?.message;
+      if (saveError) {
+        setStatus(feishuStatus, `保存失败：${saveError}`, 'error');
+        return;
+      }
+
+      chrome.runtime.sendMessage({ type: messageType }, () => {
+        const sendError = chrome.runtime.lastError?.message;
+        if (sendError) setStatus(feishuStatus, `Background error: ${sendError}`, 'error');
+      });
+    });
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -140,25 +163,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   testFeishuButton.addEventListener('click', () => {
-    const webhook = feishuWebhookInput.value.trim();
-    if (!isValidFeishuWebhook(webhook)) {
-      setStatus(feishuStatus, 'Webhook 地址无效，请检查后重试。', 'error');
-      return;
-    }
+    saveWebhookThen('CHATGPT_TEST_FEISHU', '正在发送飞书即时测试通知…');
+  });
 
-    setStatus(feishuStatus, '正在发送飞书测试通知…', 'pending');
-    chrome.storage.local.set({ [FEISHU_WEBHOOK_KEY]: webhook }, () => {
-      const saveError = chrome.runtime.lastError?.message;
-      if (saveError) {
-        setStatus(feishuStatus, `保存失败：${saveError}`, 'error');
-        return;
-      }
-
-      chrome.runtime.sendMessage({ type: 'CHATGPT_TEST_FEISHU' }, () => {
-        const sendError = chrome.runtime.lastError?.message;
-        if (sendError) setStatus(feishuStatus, `Background error: ${sendError}`, 'error');
-      });
-    });
+  testDelayedFeishuButton.addEventListener('click', () => {
+    saveWebhookThen('CHATGPT_TEST_FEISHU_DELAYED', '正在建立 30 秒延迟测试…');
   });
 
   const soundHeader = document.getElementById('soundHeader')!;
