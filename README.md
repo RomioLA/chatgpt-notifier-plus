@@ -11,7 +11,9 @@ A Chrome/Edge extension that makes parallel ChatGPT tasks easier to identify whe
 - Background tabs receive a `●` unread marker in the tab title
 - The unread marker remains until the corresponding tab is viewed
 - Optional Feishu custom-bot Webhook notifications
-- Feishu delivery waits 60 seconds and is cancelled when the corresponding ChatGPT tab is viewed
+- Every completed reply receives a unique task ID and a 60-second pending record
+- Viewing the exact ChatGPT tab acknowledges only the matching task ID and cancels its Feishu push
+- Stale tab events and stale alarms cannot cancel or send a newer task
 - Feishu messages include the conversation title, task summary, and ChatGPT conversation URL
 - Webhook configuration is stored only in the browser's local extension storage
 
@@ -36,9 +38,10 @@ After rebuilding, reload the extension and refresh already-open ChatGPT tabs so 
 2. Open the extension popup.
 3. Enable **Feishu Notification**.
 4. Paste the Webhook URL and click **Save**.
-5. Click **Test Feishu** to verify delivery.
+5. Click **Test Feishu** to verify direct delivery.
+6. Click **Test delayed Feishu (30s)** to verify alarms and service-worker wake-up.
 
-If a ChatGPT reply finishes in a background tab, the extension schedules a Feishu push for approximately 60 seconds later. Selecting that tab in a focused browser window cancels the pending push.
+For real replies, the extension first registers the exact task and then waits approximately 60 seconds. Staying on the completed conversation or opening its tab acknowledges that task and cancels the pending push. If it is still unacknowledged when its matching alarm fires, the extension sends the Feishu message.
 
 ## Development
 
