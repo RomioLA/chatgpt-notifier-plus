@@ -149,6 +149,9 @@ export default defineContentScript({
             payload: {
               title: `ChatGPT 已完成：${conversationTitle}`,
               message: `任务：${taskSummary}`,
+              conversationTitle,
+              taskSummary,
+              url: location.href,
             },
           },
           () => {
