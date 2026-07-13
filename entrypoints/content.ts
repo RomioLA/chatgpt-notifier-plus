@@ -1,5 +1,11 @@
 import { SOUNDS, playTone } from '@/lib/sounds';
 
+type AckResponse = {
+  ok?: boolean;
+  cancelled?: boolean;
+  reason?: string;
+};
+
 export default defineContentScript({
   matches: ['https://chatgpt.com/*'],
 
@@ -15,6 +21,12 @@ export default defineContentScript({
     let currentVolume = 0.5;
     let unread = false;
     let unreadTimerId: ReturnType<typeof setInterval> | null = null;
+
+    let latestCompletedTaskId: string | null = null;
+    let latestCompletedAt = 0;
+    let registeredTaskId: string | null = null;
+    let viewedAfterCompletionAt = 0;
+    let ackInFlightTaskId: string | null = null;
 
     function stripUnreadPrefix(title: string) {
       return title.replace(/^●\s*/, '').trim();
@@ -39,6 +51,14 @@ export default defineContentScript({
       const latest = messages.item(messages.length - 1);
       const text = normalizeText(latest?.innerText || latest?.textContent || '');
       return text ? truncate(text, MAX_TASK_LENGTH) : '回复已生成。';
+    }
+
+    function createTaskId() {
+      const randomPart =
+        typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+      return `reply-${Date.now()}-${randomPart}`;
     }
 
     function isExtensionContextAlive() {
@@ -103,18 +123,56 @@ export default defineContentScript({
       }
     }
 
+    function sendTaskAck(taskId: string) {
+      if (!isExtensionContextAlive() || ackInFlightTaskId === taskId) return;
+
+      ackInFlightTaskId = taskId;
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: 'CHATGPT_TASK_ACK',
+            taskId,
+          },
+          (response: AckResponse | undefined) => {
+            const error = chrome.runtime.lastError?.message;
+            if (ackInFlightTaskId === taskId) ackInFlightTaskId = null;
+
+            if (error) return;
+            if (response?.ok && registeredTaskId === taskId) {
+              registeredTaskId = null;
+            }
+          },
+        );
+      } catch {
+        if (ackInFlightTaskId === taskId) ackInFlightTaskId = null;
+      }
+    }
+
+    function confirmViewedAndAck() {
+      if (document.hidden || !document.hasFocus()) return;
+
+      if (latestCompletedTaskId) {
+        viewedAfterCompletionAt = Date.now();
+      }
+
+      if (
+        registeredTaskId &&
+        registeredTaskId === latestCompletedTaskId &&
+        viewedAfterCompletionAt >= latestCompletedAt
+      ) {
+        sendTaskAck(registeredTaskId);
+      }
+    }
+
     function reportViewed() {
       if (document.hidden) return;
 
-      // Selecting the tab is enough to clear the visual marker immediately.
-      // Focus can arrive a few milliseconds after visibilitychange, so verify it
-      // again shortly before cancelling the delayed Feishu notification.
+      // Clear the visual marker immediately. Focus can settle shortly after a
+      // tab switch, so retry the task acknowledgement a few times.
       clearUnread();
-      window.setTimeout(() => {
-        if (!document.hidden && document.hasFocus()) {
-          sendRuntimeMessage({ type: 'CHATGPT_TAB_VIEWED' });
-        }
-      }, 80);
+      confirmViewedAndAck();
+      window.setTimeout(confirmViewedAndAck, 80);
+      window.setTimeout(confirmViewedAndAck, 250);
     }
 
     document.addEventListener('visibilitychange', reportViewed);
@@ -133,6 +191,26 @@ export default defineContentScript({
       if (message?.type === 'CHATGPT_TEST_MARKER') {
         markUnread(true);
         sendResponse({ ok: true });
+        return;
+      }
+
+      if (message?.type === 'CHATGPT_TASK_REGISTERED') {
+        const taskId = message.taskId;
+        if (typeof taskId !== 'string' || !taskId || taskId !== latestCompletedTaskId) {
+          sendResponse({ ok: false, reason: 'task-not-current' });
+          return;
+        }
+
+        registeredTaskId = taskId;
+        sendResponse({ ok: true });
+
+        // The user may have opened this tab during the short registration
+        // window. In that case acknowledge the exact task immediately.
+        if (viewedAfterCompletionAt >= latestCompletedAt) {
+          sendTaskAck(taskId);
+        } else {
+          reportViewed();
+        }
       }
     });
 
@@ -188,19 +266,19 @@ export default defineContentScript({
     const DEBOUNCE_MS = 300;
 
     function sendCompletionMessage(
+      taskId: string,
       conversationTitle: string,
       taskSummary: string,
-      needsFeishuPush: boolean,
     ) {
       sendRuntimeMessage({
         type: 'CHATGPT_REPLY_DONE',
         payload: {
+          taskId,
           title: `ChatGPT 已完成：${conversationTitle}`,
           message: `任务：${taskSummary}`,
           conversationTitle,
           taskSummary,
           url: location.href,
-          needsFeishuPush,
         },
       });
     }
@@ -217,12 +295,19 @@ export default defineContentScript({
           if (document.querySelector(STREAM_SELECTORS) === null) {
             const conversationTitle = getConversationTitle();
             const taskSummary = getLatestUserMessage();
-            const needsFeishuPush = document.hidden || !document.hasFocus();
+            const taskId = createTaskId();
+            const viewedAtCompletion = !document.hidden && document.hasFocus();
+
+            latestCompletedTaskId = taskId;
+            latestCompletedAt = Date.now();
+            registeredTaskId = null;
+            ackInFlightTaskId = null;
+            viewedAfterCompletionAt = viewedAtCompletion ? latestCompletedAt : 0;
 
             playNotification();
-            markUnread(needsFeishuPush);
+            markUnread(!viewedAtCompletion);
             isStreaming = false;
-            sendCompletionMessage(conversationTitle, taskSummary, needsFeishuPush);
+            sendCompletionMessage(taskId, conversationTitle, taskSummary);
           }
           doneTimerId = null;
         }, DEBOUNCE_MS);
