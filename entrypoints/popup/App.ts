@@ -1,6 +1,6 @@
 import { SOUNDS, playTone } from '@/lib/sounds';
 
-type NotificationStatus = {
+type StatusRecord = {
   state: 'success' | 'denied' | 'error';
   message: string;
   updatedAt: number;
@@ -14,69 +14,149 @@ document.addEventListener('DOMContentLoaded', () => {
   const testNotificationButton = document.getElementById('testNotificationButton') as HTMLButtonElement;
   const testMarkerButton = document.getElementById('testMarkerButton') as HTMLButtonElement;
   const notificationStatus = document.getElementById('notificationStatus')!;
+  const feishuEnabledToggle = document.getElementById('feishuEnabledToggle') as HTMLInputElement;
+  const feishuWebhookInput = document.getElementById('feishuWebhookInput') as HTMLInputElement;
+  const saveFeishuButton = document.getElementById('saveFeishuButton') as HTMLButtonElement;
+  const testFeishuButton = document.getElementById('testFeishuButton') as HTMLButtonElement;
+  const feishuStatus = document.getElementById('feishuStatus')!;
+
   const VOLUME_STORAGE_KEY = 'chatgpt_notifier_volume';
   const SYSTEM_NOTIFICATION_KEY = 'chatgpt_notifier_system_notification_enabled';
   const NOTIFICATION_STATUS_KEY = 'chatgpt_notifier_notification_status';
   const SOUND_STORAGE_KEY = 'chatgpt_notifier_sound_id';
   const SOUND_COLLAPSED_KEY = 'chatgpt_notifier_sound_collapsed';
+  const FEISHU_ENABLED_KEY = 'chatgpt_notifier_feishu_enabled';
+  const FEISHU_WEBHOOK_KEY = 'chatgpt_notifier_feishu_webhook';
+  const FEISHU_STATUS_KEY = 'chatgpt_notifier_feishu_status';
 
   const defaultAudio = new Audio(chrome.runtime.getURL('notification.mp3'));
 
   const versionLabel = document.getElementById('versionLabel')!;
   versionLabel.textContent = `v${chrome.runtime.getManifest().version}`;
 
-  function setStatus(message: string, state?: NotificationStatus['state'] | 'pending') {
-    notificationStatus.className = 'notification-status';
-    if (state) notificationStatus.classList.add(state);
-    notificationStatus.textContent = message;
+  function setStatus(target: HTMLElement, message: string, state?: StatusRecord['state'] | 'pending') {
+    target.className = 'notification-status';
+    if (state) target.classList.add(state);
+    target.textContent = message;
   }
 
-  function renderNotificationStatus(status?: NotificationStatus) {
+  function renderStatus(target: HTMLElement, status?: StatusRecord, emptyMessage = '') {
     if (!status) {
-      setStatus('Use the buttons below to test each function.');
+      setStatus(target, emptyMessage);
       return;
     }
 
-    setStatus(status.message, status.state);
+    setStatus(target, status.message, status.state);
+  }
+
+  function isValidFeishuWebhook(value: string) {
+    try {
+      const url = new URL(value.trim());
+      const supportedHost = url.hostname === 'open.feishu.cn' || url.hostname === 'open.larksuite.com';
+      return url.protocol === 'https:' && supportedHost && url.pathname.startsWith('/open-apis/bot/v2/hook/');
+    } catch {
+      return false;
+    }
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
 
-    const statusChange = changes[NOTIFICATION_STATUS_KEY];
-    if (statusChange) {
-      renderNotificationStatus(statusChange.newValue as NotificationStatus | undefined);
+    const notificationStatusChange = changes[NOTIFICATION_STATUS_KEY];
+    if (notificationStatusChange) {
+      renderStatus(notificationStatus, notificationStatusChange.newValue as StatusRecord | undefined);
+    }
+
+    const feishuStatusChange = changes[FEISHU_STATUS_KEY];
+    if (feishuStatusChange) {
+      renderStatus(feishuStatus, feishuStatusChange.newValue as StatusRecord | undefined);
     }
   });
 
   testNotificationButton.addEventListener('click', () => {
-    setStatus('Sending test notification…', 'pending');
+    setStatus(notificationStatus, 'Sending test notification…', 'pending');
     chrome.runtime.sendMessage({ type: 'CHATGPT_TEST_NOTIFICATION' }, () => {
       const error = chrome.runtime.lastError?.message;
-      if (error) setStatus(`Background error: ${error}`, 'error');
+      if (error) setStatus(notificationStatus, `Background error: ${error}`, 'error');
     });
   });
 
   testMarkerButton.addEventListener('click', () => {
-    setStatus('Testing the current ChatGPT tab marker…', 'pending');
+    setStatus(notificationStatus, 'Testing the current ChatGPT tab marker…', 'pending');
 
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const error = chrome.runtime.lastError?.message;
       const tabId = tabs[0]?.id;
 
       if (error || typeof tabId !== 'number') {
-        setStatus(`Cannot find the active tab: ${error || 'unknown error'}`, 'error');
+        setStatus(notificationStatus, `Cannot find the active tab: ${error || 'unknown error'}`, 'error');
         return;
       }
 
       chrome.tabs.sendMessage(tabId, { type: 'CHATGPT_TEST_MARKER' }, (response) => {
         const sendError = chrome.runtime.lastError?.message;
         if (sendError || !response?.ok) {
-          setStatus('Marker test failed. Refresh the current ChatGPT page and try again.', 'error');
+          setStatus(notificationStatus, 'Marker test failed. Refresh the current ChatGPT page and try again.', 'error');
           return;
         }
 
-        setStatus('Tab marker applied. It will remain until you leave this tab and switch back to it.', 'success');
+        setStatus(
+          notificationStatus,
+          'Tab marker applied. It will remain until you leave this tab and switch back to it.',
+          'success',
+        );
+      });
+    });
+  });
+
+  saveFeishuButton.addEventListener('click', () => {
+    const webhook = feishuWebhookInput.value.trim();
+    const enabled = feishuEnabledToggle.checked;
+
+    if (enabled && !isValidFeishuWebhook(webhook)) {
+      setStatus(feishuStatus, 'Webhook 地址无效，无法启用飞书通知。', 'error');
+      return;
+    }
+
+    chrome.storage.local.set(
+      {
+        [FEISHU_ENABLED_KEY]: enabled,
+        [FEISHU_WEBHOOK_KEY]: webhook,
+      },
+      () => {
+        const error = chrome.runtime.lastError?.message;
+        if (error) {
+          setStatus(feishuStatus, `保存失败：${error}`, 'error');
+          return;
+        }
+
+        setStatus(
+          feishuStatus,
+          enabled ? '已保存。任务完成 60 秒后仍未查看时会推送飞书。' : '已保存，飞书通知当前关闭。',
+          'success',
+        );
+      },
+    );
+  });
+
+  testFeishuButton.addEventListener('click', () => {
+    const webhook = feishuWebhookInput.value.trim();
+    if (!isValidFeishuWebhook(webhook)) {
+      setStatus(feishuStatus, 'Webhook 地址无效，请检查后重试。', 'error');
+      return;
+    }
+
+    setStatus(feishuStatus, '正在发送飞书测试通知…', 'pending');
+    chrome.storage.local.set({ [FEISHU_WEBHOOK_KEY]: webhook }, () => {
+      const saveError = chrome.runtime.lastError?.message;
+      if (saveError) {
+        setStatus(feishuStatus, `保存失败：${saveError}`, 'error');
+        return;
+      }
+
+      chrome.runtime.sendMessage({ type: 'CHATGPT_TEST_FEISHU' }, () => {
+        const sendError = chrome.runtime.lastError?.message;
+        if (sendError) setStatus(feishuStatus, `Background error: ${sendError}`, 'error');
       });
     });
   });
@@ -149,6 +229,9 @@ document.addEventListener('DOMContentLoaded', () => {
       NOTIFICATION_STATUS_KEY,
       SOUND_STORAGE_KEY,
       SOUND_COLLAPSED_KEY,
+      FEISHU_ENABLED_KEY,
+      FEISHU_WEBHOOK_KEY,
+      FEISHU_STATUS_KEY,
     ],
     (result) => {
       let vol: number = result[VOLUME_STORAGE_KEY] as number;
@@ -159,11 +242,19 @@ document.addEventListener('DOMContentLoaded', () => {
       updateSliderBackground(slider);
 
       systemNotifyToggle.checked = result[SYSTEM_NOTIFICATION_KEY] === true;
-      renderNotificationStatus(result[NOTIFICATION_STATUS_KEY] as NotificationStatus | undefined);
+      renderStatus(notificationStatus, result[NOTIFICATION_STATUS_KEY] as StatusRecord | undefined, '');
 
       activeSoundId = (result[SOUND_STORAGE_KEY] as string) || 'default';
       setSoundOpen(result[SOUND_COLLAPSED_KEY] !== false);
       renderSoundList();
+
+      feishuEnabledToggle.checked = result[FEISHU_ENABLED_KEY] === true;
+      feishuWebhookInput.value = (result[FEISHU_WEBHOOK_KEY] as string) || '';
+      renderStatus(
+        feishuStatus,
+        result[FEISHU_STATUS_KEY] as StatusRecord | undefined,
+        'Webhook 仅保存在当前浏览器本机。',
+      );
     },
   );
 
