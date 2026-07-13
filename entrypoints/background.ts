@@ -4,6 +4,7 @@ type DonePayload = {
   conversationTitle?: string;
   taskSummary?: string;
   url?: string;
+  needsFeishuPush?: boolean;
 };
 
 type StatusRecord = {
@@ -14,11 +15,12 @@ type StatusRecord = {
 
 type PendingFeishuNotification = {
   tabId: number;
-  windowId: number;
   conversationTitle: string;
   taskSummary: string;
   url: string;
   createdAt: number;
+  dueAt: number;
+  isTest?: boolean;
 };
 
 export default defineBackground(() => {
@@ -30,6 +32,8 @@ export default defineBackground(() => {
   const FEISHU_PENDING_PREFIX = 'chatgpt_notifier_feishu_pending_';
   const FEISHU_ALARM_PREFIX = 'chatgpt_notifier_feishu_alarm_';
   const FEISHU_DELAY_MS = 60_000;
+  const FEISHU_TEST_DELAY_MS = 30_000;
+  const TEST_TAB_ID = -1;
 
   function writeStatus(storageKey: string, state: StatusRecord['state'], message: string) {
     chrome.storage.local.set({
@@ -45,7 +49,6 @@ export default defineBackground(() => {
     const title = payload.title || 'ChatGPT Notifier';
     const message = payload.message || 'ChatGPT has finished responding.';
 
-    // Keep notification creation aligned with the original extension.
     chrome.notifications.create(
       {
         type: 'basic',
@@ -81,17 +84,17 @@ export default defineBackground(() => {
   async function sendFeishuWebhook(
     webhook: string,
     payload: Pick<PendingFeishuNotification, 'conversationTitle' | 'taskSummary' | 'url'>,
-    isTest = false,
+    customText?: string,
   ) {
-    const text = isTest
-      ? 'ChatGPT 测试通知：飞书 Webhook 已连接。'
-      : [
-          'ChatGPT 任务已完成',
-          '',
-          `对话：${payload.conversationTitle}`,
-          `任务：${payload.taskSummary}`,
-          `打开对话：${payload.url}`,
-        ].join('\n');
+    const text =
+      customText ||
+      [
+        'ChatGPT 任务已完成',
+        '',
+        `对话：${payload.conversationTitle}`,
+        `任务：${payload.taskSummary}`,
+        `打开对话：${payload.url}`,
+      ].join('\n');
 
     const response = await fetch(webhook, {
       method: 'POST',
@@ -133,9 +136,13 @@ export default defineBackground(() => {
     return `${FEISHU_ALARM_PREFIX}${tabId}`;
   }
 
-  function cancelPendingFeishu(tabId: number) {
+  function cancelPendingFeishu(tabId: number, statusMessage?: string) {
     chrome.alarms.clear(alarmName(tabId));
     chrome.storage.local.remove(pendingStorageKey(tabId));
+
+    if (statusMessage) {
+      writeStatus(FEISHU_STATUS_KEY, 'success', statusMessage);
+    }
   }
 
   function clearUnreadMarker(tabId: number) {
@@ -144,29 +151,43 @@ export default defineBackground(() => {
     });
   }
 
-  function isTabActuallyViewed(tabId: number, windowId: number, callback: (viewed: boolean) => void) {
-    chrome.tabs.get(tabId, (tab) => {
-      if (chrome.runtime.lastError || !tab || tab.active !== true) {
-        callback(false);
-        return;
-      }
+  function storeAndSchedulePending(pending: PendingFeishuNotification, delayLabel: string) {
+    const storageKey = pendingStorageKey(pending.tabId);
+    const alarm = alarmName(pending.tabId);
 
-      chrome.windows.get(windowId, (window) => {
-        if (chrome.runtime.lastError || !window) {
-          callback(false);
+    chrome.alarms.clear(alarm, () => {
+      void chrome.runtime.lastError;
+
+      chrome.storage.local.set({ [storageKey]: pending }, () => {
+        const storageError = chrome.runtime.lastError?.message;
+        if (storageError) {
+          writeStatus(FEISHU_STATUS_KEY, 'error', `保存待推送任务失败：${storageError}`);
           return;
         }
 
-        callback(window.focused === true);
+        chrome.alarms.create(alarm, { when: pending.dueAt });
+        chrome.alarms.get(alarm, (createdAlarm) => {
+          const alarmError = chrome.runtime.lastError?.message;
+          if (alarmError || !createdAlarm) {
+            writeStatus(FEISHU_STATUS_KEY, 'error', `创建延迟闹钟失败：${alarmError || '未返回闹钟记录'}`);
+            chrome.storage.local.remove(storageKey);
+            return;
+          }
+
+          writeStatus(FEISHU_STATUS_KEY, 'success', `${delayLabel}已建立；返回对应标签页会取消推送。`);
+        });
       });
     });
   }
 
   function scheduleFeishuNotification(payload: DonePayload, tab?: chrome.tabs.Tab) {
-    const tabId = tab?.id;
-    const windowId = tab?.windowId;
+    if (payload.needsFeishuPush !== true) {
+      writeStatus(FEISHU_STATUS_KEY, 'success', '任务完成时页面已在查看，不安排飞书推送。');
+      return;
+    }
 
-    if (typeof tabId !== 'number' || typeof windowId !== 'number') {
+    const tabId = tab?.id;
+    if (typeof tabId !== 'number') {
       writeStatus(FEISHU_STATUS_KEY, 'error', '无法确定任务对应的标签页，未安排飞书通知。');
       return;
     }
@@ -180,27 +201,18 @@ export default defineBackground(() => {
         return;
       }
 
-      isTabActuallyViewed(tabId, windowId, (viewed) => {
-        if (viewed) {
-          cancelPendingFeishu(tabId);
-          return;
-        }
+      const dueAt = Date.now() + FEISHU_DELAY_MS;
+      const pending: PendingFeishuNotification = {
+        tabId,
+        conversationTitle:
+          payload.conversationTitle || payload.title?.replace(/^ChatGPT 已完成：/, '') || 'ChatGPT 对话',
+        taskSummary: payload.taskSummary || payload.message?.replace(/^任务：/, '') || '回复已生成。',
+        url: payload.url || tab?.url || 'https://chatgpt.com/',
+        createdAt: Date.now(),
+        dueAt,
+      };
 
-        const pending: PendingFeishuNotification = {
-          tabId,
-          windowId,
-          conversationTitle:
-            payload.conversationTitle || payload.title?.replace(/^ChatGPT 已完成：/, '') || 'ChatGPT 对话',
-          taskSummary: payload.taskSummary || payload.message?.replace(/^任务：/, '') || '回复已生成。',
-          url: payload.url || 'https://chatgpt.com/',
-          createdAt: Date.now(),
-        };
-
-        chrome.storage.local.set({ [pendingStorageKey(tabId)]: pending }, () => {
-          chrome.alarms.create(alarmName(tabId), { when: Date.now() + FEISHU_DELAY_MS });
-          writeStatus(FEISHU_STATUS_KEY, 'success', '飞书通知已等待 60 秒；打开对应标签页会自动取消。');
-        });
-      });
+      storeAndSchedulePending(pending, '飞书通知 60 秒倒计时');
     });
   }
 
@@ -219,12 +231,99 @@ export default defineBackground(() => {
           taskSummary: '测试飞书通知',
           url: 'https://chatgpt.com/',
         },
-        true,
+        'ChatGPT 测试通知：飞书 Webhook 已连接。',
       )
-        .then(() => writeStatus(FEISHU_STATUS_KEY, 'success', '飞书测试通知发送成功。'))
+        .then(() => writeStatus(FEISHU_STATUS_KEY, 'success', '飞书即时测试通知发送成功。'))
         .catch((error: unknown) =>
           writeStatus(FEISHU_STATUS_KEY, 'error', `飞书发送失败：${error instanceof Error ? error.message : String(error)}`),
         );
+    });
+  }
+
+  function testDelayedFeishuNotification() {
+    chrome.storage.local.get([FEISHU_WEBHOOK_KEY], (result) => {
+      const webhook = result[FEISHU_WEBHOOK_KEY];
+      if (!isValidFeishuWebhook(webhook)) {
+        writeStatus(FEISHU_STATUS_KEY, 'error', '飞书 Webhook 无效，请先保存正确地址。');
+        return;
+      }
+
+      const pending: PendingFeishuNotification = {
+        tabId: TEST_TAB_ID,
+        conversationTitle: 'ChatGPT Notifier Plus',
+        taskSummary: '30 秒延迟链路测试',
+        url: 'https://chatgpt.com/',
+        createdAt: Date.now(),
+        dueAt: Date.now() + FEISHU_TEST_DELAY_MS,
+        isTest: true,
+      };
+
+      storeAndSchedulePending(pending, '飞书延迟测试 30 秒倒计时');
+    });
+  }
+
+  function handleFeishuAlarm(alarm: chrome.alarms.Alarm) {
+    if (!alarm.name.startsWith(FEISHU_ALARM_PREFIX)) return;
+
+    const tabId = Number(alarm.name.slice(FEISHU_ALARM_PREFIX.length));
+    if (!Number.isInteger(tabId)) return;
+
+    const storageKey = pendingStorageKey(tabId);
+    chrome.storage.local.get([storageKey, FEISHU_ENABLED_KEY, FEISHU_WEBHOOK_KEY], (result) => {
+      const pending = result[storageKey] as PendingFeishuNotification | undefined;
+      if (!pending) {
+        writeStatus(FEISHU_STATUS_KEY, 'error', '延迟闹钟已触发，但未找到对应待推送任务。');
+        return;
+      }
+
+      if (!pending.isTest && result[FEISHU_ENABLED_KEY] !== true) {
+        cancelPendingFeishu(tabId, '飞书通知已关闭，待推送任务已取消。');
+        return;
+      }
+
+      const webhook = result[FEISHU_WEBHOOK_KEY];
+      if (!isValidFeishuWebhook(webhook)) {
+        writeStatus(FEISHU_STATUS_KEY, 'error', '延迟闹钟已触发，但 Webhook 无效。');
+        cancelPendingFeishu(tabId);
+        return;
+      }
+
+      writeStatus(FEISHU_STATUS_KEY, 'success', '延迟闹钟已触发，正在发送飞书通知…');
+
+      const customText = pending.isTest ? 'ChatGPT 延迟测试通知：30 秒闹钟与后台唤醒链路正常。' : undefined;
+      void sendFeishuWebhook(webhook, pending, customText)
+        .then(() =>
+          writeStatus(
+            FEISHU_STATUS_KEY,
+            'success',
+            pending.isTest ? '飞书延迟测试通知发送成功。' : `已向飞书推送：${pending.conversationTitle}`,
+          ),
+        )
+        .catch((error: unknown) =>
+          writeStatus(
+            FEISHU_STATUS_KEY,
+            'error',
+            `飞书发送失败：${error instanceof Error ? error.message : String(error)}`,
+          ),
+        )
+        .finally(() => cancelPendingFeishu(tabId));
+    });
+  }
+
+  function restorePendingAlarms() {
+    chrome.storage.local.get(null, (items) => {
+      for (const [key, value] of Object.entries(items)) {
+        if (!key.startsWith(FEISHU_PENDING_PREFIX)) continue;
+
+        const pending = value as PendingFeishuNotification | undefined;
+        if (!pending || !Number.isInteger(pending.tabId) || typeof pending.dueAt !== 'number') continue;
+
+        const name = alarmName(pending.tabId);
+        chrome.alarms.get(name, (existing) => {
+          if (chrome.runtime.lastError || existing) return;
+          chrome.alarms.create(name, { when: Math.max(Date.now() + 1_000, pending.dueAt) });
+        });
+      }
     });
   }
 
@@ -244,6 +343,20 @@ export default defineBackground(() => {
       return;
     }
 
+    if (message.type === 'CHATGPT_TEST_FEISHU_DELAYED') {
+      testDelayedFeishuNotification();
+      return;
+    }
+
+    if (message.type === 'CHATGPT_TAB_VIEWED') {
+      const tabId = sender.tab?.id;
+      if (typeof tabId === 'number') {
+        clearUnreadMarker(tabId);
+        cancelPendingFeishu(tabId, '已查看对应 ChatGPT 标签页，飞书推送已取消。');
+      }
+      return;
+    }
+
     if (message.type !== 'CHATGPT_REPLY_DONE') return;
 
     chrome.storage.local.get([SYSTEM_NOTIFICATION_KEY], (result) => {
@@ -255,73 +368,11 @@ export default defineBackground(() => {
     scheduleFeishuNotification(message.payload || {}, sender.tab);
   });
 
-  chrome.alarms.onAlarm.addListener((alarm) => {
-    if (!alarm.name.startsWith(FEISHU_ALARM_PREFIX)) return;
-
-    const tabId = Number(alarm.name.slice(FEISHU_ALARM_PREFIX.length));
-    if (!Number.isInteger(tabId)) return;
-
-    const storageKey = pendingStorageKey(tabId);
-    chrome.storage.local.get([storageKey, FEISHU_ENABLED_KEY, FEISHU_WEBHOOK_KEY], (result) => {
-      const pending = result[storageKey] as PendingFeishuNotification | undefined;
-      if (!pending) return;
-
-      if (result[FEISHU_ENABLED_KEY] !== true) {
-        cancelPendingFeishu(tabId);
-        return;
-      }
-
-      const webhook = result[FEISHU_WEBHOOK_KEY];
-      if (!isValidFeishuWebhook(webhook)) {
-        writeStatus(FEISHU_STATUS_KEY, 'error', '飞书 Webhook 无效，延迟通知未发送。');
-        cancelPendingFeishu(tabId);
-        return;
-      }
-
-      isTabActuallyViewed(pending.tabId, pending.windowId, (viewed) => {
-        if (viewed) {
-          cancelPendingFeishu(tabId);
-          return;
-        }
-
-        void sendFeishuWebhook(webhook, pending)
-          .then(() => writeStatus(FEISHU_STATUS_KEY, 'success', `已向飞书推送：${pending.conversationTitle}`))
-          .catch((error: unknown) =>
-            writeStatus(
-              FEISHU_STATUS_KEY,
-              'error',
-              `飞书发送失败：${error instanceof Error ? error.message : String(error)}`,
-            ),
-          )
-          .finally(() => cancelPendingFeishu(tabId));
-      });
-    });
-  });
-
-  // The task is considered handled only after its tab is selected in a focused Edge window.
-  chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
-    clearUnreadMarker(tabId);
-
-    chrome.windows.get(windowId, (window) => {
-      if (!chrome.runtime.lastError && window?.focused) {
-        cancelPendingFeishu(tabId);
-      }
-    });
-  });
-
-  chrome.windows.onFocusChanged.addListener((windowId) => {
-    if (windowId === chrome.windows.WINDOW_ID_NONE) return;
-
-    chrome.tabs.query({ active: true, windowId }, (tabs) => {
-      const tabId = tabs[0]?.id;
-      if (typeof tabId === 'number') {
-        clearUnreadMarker(tabId);
-        cancelPendingFeishu(tabId);
-      }
-    });
-  });
+  chrome.alarms.onAlarm.addListener(handleFeishuAlarm);
 
   chrome.tabs.onRemoved.addListener((tabId) => {
     cancelPendingFeishu(tabId);
   });
+
+  restorePendingAlarms();
 });
