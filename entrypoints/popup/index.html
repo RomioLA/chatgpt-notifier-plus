@@ -18,6 +18,9 @@
       <span class="chevron" id="soundChevron"></span>
     </button>
     <div class="sound-list" id="soundList"></div>
+
+    <div class="section-divider"></div>
+
     <div class="toggle-row">
       <label for="systemNotifyToggle">System Notification</label>
       <label class="switch">
@@ -29,6 +32,32 @@
     <button class="test-button" id="testNotificationButton" type="button">Test notification</button>
     <button class="test-button" id="testMarkerButton" type="button">Test tab marker</button>
     <div class="notification-status" id="notificationStatus" role="status" aria-live="polite"></div>
+
+    <div class="section-divider"></div>
+
+    <div class="toggle-row">
+      <label for="feishuEnabledToggle">Feishu Notification</label>
+      <label class="switch">
+        <input type="checkbox" id="feishuEnabledToggle">
+        <span class="switch-slider"></span>
+      </label>
+    </div>
+    <label class="field-label" for="feishuWebhookInput">Webhook URL</label>
+    <input
+      class="text-input"
+      id="feishuWebhookInput"
+      type="password"
+      autocomplete="off"
+      spellcheck="false"
+      placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+    >
+    <div class="hint-text">Wait 60 seconds after completion. Opening the corresponding ChatGPT tab cancels the Feishu push.</div>
+    <div class="button-row">
+      <button class="test-button" id="saveFeishuButton" type="button">Save</button>
+      <button class="test-button" id="testFeishuButton" type="button">Test Feishu</button>
+    </div>
+    <div class="notification-status" id="feishuStatus" role="status" aria-live="polite"></div>
+
     <div class="footer">
       <span class="version" id="versionLabel"></span>
       <a class="github-link" href="https://github.com/RomioLA/chatgpt-notifier-plus" target="_blank" title="GitHub">
