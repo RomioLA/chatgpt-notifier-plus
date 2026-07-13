@@ -52,7 +52,6 @@ export default defineContentScript({
     }
 
     function markUnread(force = false) {
-      // Normal completion markers are only needed for tabs the user is not viewing.
       if (!force && !document.hidden) return;
 
       unread = true;
@@ -76,6 +75,26 @@ export default defineContentScript({
         document.title = cleanTitle;
       }
     }
+
+    function sendRuntimeMessage(message: Record<string, unknown>) {
+      try {
+        chrome.runtime.sendMessage(message, () => {
+          void chrome.runtime.lastError;
+        });
+      } catch {
+        // The extension may have been reloaded while this page remained open.
+      }
+    }
+
+    function reportViewed() {
+      if (document.hidden || !document.hasFocus()) return;
+
+      clearUnread();
+      sendRuntimeMessage({ type: 'CHATGPT_TAB_VIEWED' });
+    }
+
+    document.addEventListener('visibilitychange', reportViewed);
+    window.addEventListener('focus', reportViewed);
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === 'CHATGPT_CLEAR_UNREAD') {
@@ -141,26 +160,22 @@ export default defineContentScript({
     let doneTimerId: ReturnType<typeof setTimeout> | null = null;
     const DEBOUNCE_MS = 300;
 
-    function sendCompletionMessage(conversationTitle: string, taskSummary: string) {
-      try {
-        chrome.runtime.sendMessage(
-          {
-            type: 'CHATGPT_REPLY_DONE',
-            payload: {
-              title: `ChatGPT 已完成：${conversationTitle}`,
-              message: `任务：${taskSummary}`,
-              conversationTitle,
-              taskSummary,
-              url: location.href,
-            },
-          },
-          () => {
-            void chrome.runtime.lastError;
-          },
-        );
-      } catch {
-        // The extension was reloaded while this page was still open.
-      }
+    function sendCompletionMessage(
+      conversationTitle: string,
+      taskSummary: string,
+      needsFeishuPush: boolean,
+    ) {
+      sendRuntimeMessage({
+        type: 'CHATGPT_REPLY_DONE',
+        payload: {
+          title: `ChatGPT 已完成：${conversationTitle}`,
+          message: `任务：${taskSummary}`,
+          conversationTitle,
+          taskSummary,
+          url: location.href,
+          needsFeishuPush,
+        },
+      });
     }
 
     function checkStreaming() {
@@ -175,11 +190,12 @@ export default defineContentScript({
           if (document.querySelector(STREAM_SELECTORS) === null) {
             const conversationTitle = getConversationTitle();
             const taskSummary = getLatestUserMessage();
+            const needsFeishuPush = document.hidden || !document.hasFocus();
 
             playNotification();
-            markUnread();
+            markUnread(needsFeishuPush);
             isStreaming = false;
-            sendCompletionMessage(conversationTitle, taskSummary);
+            sendCompletionMessage(conversationTitle, taskSummary, needsFeishuPush);
           }
           doneTimerId = null;
         }, DEBOUNCE_MS);
