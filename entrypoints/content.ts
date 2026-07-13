@@ -41,8 +41,23 @@ export default defineContentScript({
       return text ? truncate(text, MAX_TASK_LENGTH) : '回复已生成。';
     }
 
+    function isExtensionContextAlive() {
+      try {
+        return Boolean(chrome.runtime?.id);
+      } catch {
+        return false;
+      }
+    }
+
     function applyUnreadMarker() {
       if (!unread) return;
+
+      // An unpacked extension reload invalidates the old content-script context.
+      // Stop old scripts from leaving a permanent dot behind.
+      if (!isExtensionContextAlive()) {
+        clearUnread();
+        return;
+      }
 
       const cleanTitle = stripUnreadPrefix(document.title) || 'ChatGPT';
       const desiredTitle = `${UNREAD_PREFIX}${cleanTitle}`;
@@ -77,6 +92,8 @@ export default defineContentScript({
     }
 
     function sendRuntimeMessage(message: Record<string, unknown>) {
+      if (!isExtensionContextAlive()) return;
+
       try {
         chrome.runtime.sendMessage(message, () => {
           void chrome.runtime.lastError;
@@ -87,14 +104,24 @@ export default defineContentScript({
     }
 
     function reportViewed() {
-      if (document.hidden || !document.hasFocus()) return;
+      if (document.hidden) return;
 
+      // Selecting the tab is enough to clear the visual marker immediately.
+      // Focus can arrive a few milliseconds after visibilitychange, so verify it
+      // again shortly before cancelling the delayed Feishu notification.
       clearUnread();
-      sendRuntimeMessage({ type: 'CHATGPT_TAB_VIEWED' });
+      window.setTimeout(() => {
+        if (!document.hidden && document.hasFocus()) {
+          sendRuntimeMessage({ type: 'CHATGPT_TAB_VIEWED' });
+        }
+      }, 80);
     }
 
     document.addEventListener('visibilitychange', reportViewed);
     window.addEventListener('focus', reportViewed);
+    window.addEventListener('pageshow', reportViewed);
+    window.addEventListener('pointerdown', reportViewed, { capture: true });
+    window.addEventListener('keydown', reportViewed, { capture: true });
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === 'CHATGPT_CLEAR_UNREAD') {
@@ -212,6 +239,11 @@ export default defineContentScript({
       attributes: true,
       attributeFilter: ['class', 'data-testid', 'aria-busy'],
     });
+
+    // Remove a stale prefix left by a previous extension reload.
+    if (!document.hidden) {
+      clearUnread();
+    }
 
     checkStreaming();
   },
